@@ -1,25 +1,20 @@
-# 🤖 MGShield v4
+# Group Protection Bot
 
-A Telegram group moderation bot built with Aiogram 3.x — detects abuse, warns, mutes, and auto-bans users after 3 warnings.
+This Telegram bot automatically protects your group by:
+- Deleting link messages (for non-admins)
+- Muting users who use abusive words (permanent after 3 warnings)
+- Showing welcome messages
+- Admin-only commands: /ban, /unban, /mute, /unmute, /warn, /resetwarns
 
-## 🚀 Features
-- Hindi + English bad word detection
-- Warn, mute, unmute, ban, unban system
-- Auto-ban after 3 warnings
-- Sends alert in group tagging @admin
-- Welcome message for new members
+## 🚀 Deployment on Render
 
-## 🛠️ Setup (Render)
-1. Upload this repo to GitHub.
-2. Go to [Render](https://render.com/) → New → Web Service.
-3. Connect GitHub & select this repo.
-4. Set:
-   - **Build command:** `pip install -r requirements.txt`
-   - **Start command:** `python main.py`
-   - **Environment variable:** `BOT_TOKEN` = your BotFather token
-5. Deploy ✅
-
-## 📂 Files
-- `main.py` → Entry point
-- `handlers.py` → All moderation logic
-- `requirements.txt` → Dependencies
+1. Create a new **Web Service** on [Render.com](https://render.com/)
+2. Upload all files from this ZIP
+3. Set **Environment Variable**:  
+   - Key: `BOT_TOKEN`  
+   - Value: Your Telegram bot token
+4. Set **Start Command**:  
+   ```bash
+   python3 main.py
+   ```
+5. Click **Deploy** and your bot will start running 24×7.
