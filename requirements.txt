@@ -1,1 +1,4 @@
-python-telegram-bot==20.8
+aiogram==3.13.1
+asyncio
+aiohttp
+logging
