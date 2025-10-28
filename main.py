@@ -11,7 +11,12 @@ async def main():
     if not BOT_TOKEN:
         print("❌ BOT_TOKEN not found! Set it in Render environment variables.")
         return
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+    DefaultBotProperties
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
     dp = Dispatcher(storage=MemoryStorage())
     register_handlers(dp, bot)
     print("🤖 MGShield v4 started successfully!")
