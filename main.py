@@ -1,29 +1,28 @@
+import asyncio
 import os
 import logging
-from handlers import build_application
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from handlers import register_handlers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-def main():
-    token = os.environ.get("BOT_TOKEN")
-    if not token:
-        raise RuntimeError("BOT_TOKEN environment variable missing. Set it in Render environment variables.")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    logging.error("BOT_TOKEN missing in env. Set it in Render environment variables.")
+    raise SystemExit(1)
 
-    webhook_base = os.environ.get("WEBHOOK_URL")  # e.g. https://your-service.onrender.com
-    port = int(os.environ.get("PORT", "10000"))
+async def main():
+    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    dp = Dispatcher(storage=MemoryStorage())
 
-    app = build_application(token=token)
+    register_handlers(dp, bot)
 
-    # If WEBHOOK_URL provided, run in webhook mode (preferred on Render)
-    if webhook_base:
-        webhook_path = f"/{token}"
-        webhook_url = f"{webhook_base.rstrip('/')}{webhook_path}"
-        logging.info("Starting webhook: %s (port %s, path %s)", webhook_url, port, webhook_path)
-        app.run_webhook(listen="0.0.0.0", port=port, path=webhook_path, webhook_url=webhook_url)
-    else:
-        # fallback to polling (not recommended for hosted services)
-        logging.info("WEBHOOK_URL not set - falling back to polling.")
-        app.run_polling()
+    logging.info("Starting polling...")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

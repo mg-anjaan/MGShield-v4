@@ -1,322 +1,270 @@
-import os
-import json
 import re
 import time
+import logging
+from collections import defaultdict
 from typing import Dict
-from telegram import Update, ChatPermissions
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ChatMemberHandler,
-    filters,
-    ContextTypes,
-)
+from aiogram import types, Bot, Dispatcher
+from aiogram.filters import Command
+from aiogram.types import ChatPermissions, Message
 
-# --- Config via environment ---
-ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "7996780813").split(",") if x.strip()]
-WARN_FILE = "warnings.json"
-WARN_LIMIT = int(os.environ.get("WARN_LIMIT", "3"))
-SPAM_THRESHOLD = int(os.environ.get("SPAM_THRESHOLD", "5"))  # continuous messages threshold
+# ---------------- CONFIG ----------------
+WARN_LIMIT = 3
+SPAM_THRESHOLD = 5            # consecutive messages threshold
+MUTE_DURATION_SECONDS = 60*60*24*365*10  # "permanent" ~10 years
+ABUSIVE_FILE = "abusive_words.txt"
 
-# Placeholder abusive words list — replace with your private list before deploying
-BAD_WORDS = ["<replace_with_your_private_bad_words>"]
+logging.basicConfig(level=logging.INFO)
 
-# Link regex (covers text and captions, basic)
-LINK_RE = re.compile(r"https?://\S+|t\.me/\S+|telegram\.me/\S+|bit\.ly/\S+", flags=re.IGNORECASE)
+# ---------------- STORAGE ----------------
+try:
+    with open(ABUSIVE_FILE, "r", encoding="utf-8") as f:
+        ABUSIVE = set([line.strip().lower() for line in f if line.strip()])
+except FileNotFoundError:
+    sample = ["fuck","bitch","madarchod","behenchod","chutiya","bc","mc","randi","gaand","gandu","lund","lauda"] 
+    with open(ABUSIVE_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(sample))
+    ABUSIVE = set(sample)
 
-# Spam tracker: per-chat tracking of consecutive messages
-SPAM_TRACK: Dict[int, Dict] = {}
+# in-memory warns & spam trackers
+warns: Dict[int, int] = defaultdict(int)  # key: user_id -> warn count (global per chat in messages)
+# per-chat consecutive message tracker:
+# { chat_id: {"last_user": user_id, "count": n} }
+user_sequences: Dict[int, Dict] = defaultdict(lambda: {"last_user": None, "count": 0})
 
-# --- Persistence helpers ---
-def load_warns():
+# ---------------- HELPERS ----------------
+def mute_perms() -> ChatPermissions:
+    return ChatPermissions(can_send_messages=False, can_send_media_messages=False,
+                       can_send_other_messages=False, can_add_web_page_previews=False)
+
+def unmute_perms() -> ChatPermissions:
+    return ChatPermissions(can_send_messages=True, can_send_media_messages=True,
+                       can_send_other_messages=True, can_add_web_page_previews=True)
+
+async def is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     try:
-        with open(WARN_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.is_chat_admin() or member.is_chat_owner()
     except Exception:
-        return {}
+        return False
 
-def save_warns(w):
-    with open(WARN_FILE, "w", encoding="utf-8") as f:
-        json.dump(w, f, indent=2)
+def contains_link_in_message(msg: Message) -> bool:
+    # check entities (url/text_link), caption, text and forwarded
+    if getattr(msg, 'entities', None):
+        for ent in msg.entities:
+            if ent.type in ("url", "text_link"):
+                return True
+    if getattr(msg, 'caption', None) and ("http" in (msg.caption or "").lower() or "t.me" in (msg.caption or "").lower()):
+        return True
+    if getattr(msg, 'text', None) and ("http" in (msg.text or "").lower() or "t.me" in (msg.text or "").lower()):
+        return True
+    return False
 
-# --- Helpers ---
-def is_admin_user(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-def contains_bad_word(text: str) -> bool:
+def contains_abusive_text(text: str) -> bool:
     if not text:
         return False
-    t = text.lower()
-    for w in BAD_WORDS:
-        if not w:
-            continue
-        if re.search(rf"\b{re.escape(w)}\b", t):
+    cleaned = re.sub(r"[^\w\s]", " ", text.lower())
+    tokens = cleaned.split()
+    for t in tokens:
+        if t in ABUSIVE:
             return True
     return False
 
-def contains_link(text: str) -> bool:
-    if not text:
-        return False
-    return bool(LINK_RE.search(text))
+def pretty_user(u: types.User) -> str:
+    name = (u.first_name or "") + ( (" " + u.last_name) if u.last_name else "")
+    if u.username:
+        return f"{name} (@{u.username})"
+    return name or str(u.id)
 
-def extract_text(msg):
-    parts = []
-    if getattr(msg, "text", None):
-        parts.append(msg.text)
-    if getattr(msg, "caption", None):
-        parts.append(msg.caption)
-    return " ".join([p for p in parts if p])
+# ---------------- REGISTER HANDLERS ----------------
+def register_handlers(dp: Dispatcher, bot: Bot):
 
-# --- Build application ---
-def build_application(token: str):
-    app = ApplicationBuilder().token(token).build()
-
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("tagadmins", cmd_tagadmins))
-    app.add_handler(CommandHandler("mute", cmd_mute, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("unmute", cmd_unmute, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("ban", cmd_ban, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("unban", cmd_unban, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("warn", cmd_warn, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("resetwarns", cmd_resetwarns, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("tagadmins", cmd_tagadmins, filters=filters.ChatType.GROUPS))
-
-    app.add_handler(ChatMemberHandler(welcome_new_members, ChatMemberHandler.CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
-
-    return app
-
-# --- Commands ---
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Group Protection Bot active. Admin-only commands available.")
-
-async def cmd_tagadmins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    admins = await chat.get_administrators()
-    mentions = []
-    for a in admins:
-        if a.user.username:
-            mentions.append(f"@{a.user.username}")
-        else:
-            mentions.append(a.user.first_name)
-    if mentions:
-        await update.message.reply_text(" ".join(mentions))
-    else:
-        await update.message.reply_text("No admins found to tag.")
-
-async def _is_command_admin(update: Update) -> bool:
-    user = update.effective_user
-    return user and user.id in ADMIN_IDS
-
-def _extract_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if msg.reply_to_message:
-        return msg.reply_to_message.from_user
-    if context.args:
-        try:
-            uid = int(context.args[0])
-            # return a simple object-like container with id and first_name
-            class U: pass
-            u = U(); u.id = uid; u.first_name = str(uid)
-            return u
-        except:
-            return None
-    return None
-
-async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _is_command_admin(update):
-        await update.message.reply_text("❌ Only admins can use this command.")
-        return
-    target = _extract_target_user(update, context)
-    if not target:
-        await update.message.reply_text("Usage: reply to a user or /mute <user_id>")
-        return
-    try:
-        await update.effective_chat.restrict_member(target.id, permissions=ChatPermissions(can_send_messages=False))
-        await update.effective_chat.send_message(f"🔇 {target.first_name} has been muted by admin.")
-    except Exception as e:
-        await update.message.reply_text(f"Failed to mute: {e}")
-
-async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _is_command_admin(update):
-        await update.message.reply_text("❌ Only admins can use this command.")
-        return
-    target = _extract_target_user(update, context)
-    if not target:
-        await update.message.reply_text("Usage: reply to a user or /unmute <user_id>")
-        return
-    try:
-        await update.effective_chat.restrict_member(target.id, permissions=ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
-        await update.effective_chat.send_message(f"🔊 {target.first_name} has been unmuted by admin.")
-    except Exception as e:
-        await update.message.reply_text(f"Failed to unmute: {e}")
-
-async def cmd_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _is_command_admin(update):
-        await update.message.reply_text("❌ Only admins can use this command.")
-        return
-    target = _extract_target_user(update, context)
-    if not target:
-        await update.message.reply_text("Usage: reply to a user or /ban <user_id>")
-        return
-    try:
-        await update.effective_chat.ban_member(target.id)
-        await update.effective_chat.send_message(f"⛔ {target.first_name} has been banned by admin.")
-    except Exception as e:
-        await update.message.reply_text(f"Failed to ban: {e}")
-
-async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _is_command_admin(update):
-        await update.message.reply_text("❌ Only admins can use this command.")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /unban <user_id>")
-        return
-    try:
-        uid = int(context.args[0])
-        await update.effective_chat.unban_member(uid)
-        await update.effective_chat.send_message(f"✅ User {uid} has been unbanned by admin.")
-    except Exception as e:
-        await update.message.reply_text(f"Failed to unban: {e}")
-
-async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _is_command_admin(update):
-        await update.message.reply_text("❌ Only admins can use this command.")
-        return
-    msg = update.message
-    if msg.reply_to_message:
-        target = msg.reply_to_message.from_user
-        warns = load_warns()
-        key = f"{msg.chat_id}:{target.id}"
-        warns[key] = warns.get(key, 0) + 1
-        save_warns(warns)
-        count = warns[key]
-        await update.effective_chat.send_message(f"⚠️ {target.first_name} warned ({count}/{WARN_LIMIT}).")
-        if count >= WARN_LIMIT:
-            await update.effective_chat.restrict_member(target.id, permissions=ChatPermissions(can_send_messages=False))
-            await update.effective_chat.send_message(f"🔇 {target.first_name} muted automatically after {WARN_LIMIT} warnings.")
-    else:
-        await update.message.reply_text("Reply to a user to warn them.")
-
-async def cmd_resetwarns(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _is_command_admin(update):
-        await update.message.reply_text("❌ Only admins can use this command.")
-        return
-    msg = update.message
-    if msg.reply_to_message:
-        target = msg.reply_to_message.from_user
-        warns = load_warns()
-        key = f"{msg.chat_id}:{target.id}"
-        warns[key] = 0
-        save_warns(warns)
-        await update.effective_chat.send_message(f"✅ Warnings reset for {target.first_name}.")
-    else:
-        await update.message.reply_text("Reply to a user to reset warnings.")
-
-# Welcome handler
-async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        cm = update.chat_member
-        new = cm.new_chat_member.user
-        chat = await context.bot.get_chat(cm.chat.id)
-        text = f"👋 Welcome {new.first_name} to {chat.title}! Please be respectful and follow the rules."
-        await context.bot.send_message(chat_id=cm.chat.id, text=text)
-    except Exception:
-        pass
-
-# Message router
-async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg:
-        return
-    chat_id = msg.chat.id
-    user = msg.from_user
-
-    # ignore admins
-    try:
-        member = await msg.chat.get_member(user.id)
-        if member.status in ("administrator", "creator"):
+    @dp.message()
+    async def all_messages(message: Message):
+        chat = message.chat
+        if chat.type not in ("group", "supergroup"):
             return
-    except Exception:
-        pass
 
-    # extract text and captions
-    text_parts = []
-    if getattr(msg, "text", None):
-        text_parts.append(msg.text)
-    if getattr(msg, "caption", None):
-        text_parts.append(msg.caption)
-    text = " ".join([p for p in text_parts if p]).strip()
+        user = message.from_user
+        uid = user.id
 
-    # Link check (covers captions and forwarded text)
-    if contains_link(text):
+        # Admins bypass moderation
+        if await is_admin(bot, chat.id, uid):
+            # reset spam sequence if admin speaks (prevents accidental consecutive count)
+            user_sequences[chat.id] = {"last_user": None, "count": 0}
+            return
+
+        # 1) Link detection (covers caption/forwarded)
+        if contains_link_in_message(message):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            warns[uid] += 1
+            count = warns[uid]
+            await bot.send_message(chat.id, f"⚠️ {pretty_user(user)}, links are not allowed! Warning {count}/{WARN_LIMIT}")
+            if count >= WARN_LIMIT:
+                try:
+                    await bot.restrict_chat_member(chat.id, uid, permissions=mute_perms(), until_date=int(time.time())+MUTE_DURATION_SECONDS)
+                    await bot.send_message(chat.id, f"🔇 {pretty_user(user)} has been muted after {WARN_LIMIT} warnings for links.")
+                except Exception:
+                    pass
+            return
+
+        # 2) Abusive word detection
+        text_to_check = (message.text or "") + " " + (message.caption or "")
+        if contains_abusive_text(text_to_check):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            warns[uid] += 1
+            count = warns[uid]
+            await bot.send_message(chat.id, f"🚫 {pretty_user(user)} used abusive language. Warning {count}/{WARN_LIMIT}")
+            if count >= WARN_LIMIT:
+                try:
+                    await bot.restrict_chat_member(chat.id, uid, permissions=mute_perms(), until_date=int(time.time())+MUTE_DURATION_SECONDS)
+                    await bot.send_message(chat.id, f"🔇 {pretty_user(user)} has been muted after {WARN_LIMIT} warnings for abusive language.")
+                except Exception:
+                    pass
+            return
+
+        # 3) Spam detection: consecutive messages logic
+        seq = user_sequences[chat.id]
+        if seq["last_user"] == uid:
+            seq["count"] += 1
+        else:
+            seq["last_user"] = uid
+            seq["count"] = 1
+        user_sequences[chat.id] = seq
+
+        if seq["count"] >= SPAM_THRESHOLD:
+            try:
+                await bot.restrict_chat_member(chat.id, uid, permissions=mute_perms(), until_date=int(time.time())+MUTE_DURATION_SECONDS)
+                await bot.send_message(chat.id, f"🚫 {pretty_user(user)} has been muted for spamming ({SPAM_THRESHOLD} continuous messages).")
+            except Exception:
+                pass
+            # reset sequence
+            user_sequences[chat.id] = {"last_user": None, "count": 0}
+            return
+
+    # Welcome new members (works for new chat members messages)
+    @dp.message(content_types=types.ContentType.NEW_CHAT_MEMBERS)
+    async def welcome(message: Message):
+        for m in message.new_chat_members:
+            await message.reply(f"👋 Welcome {m.first_name} to {message.chat.title}! Please be respectful and follow the group rules.")
+
+    # ---------------- Admin commands (admin only) ----------------
+    async def _is_admin_cmd(msg: Message) -> bool:
+        return await is_admin(bot, msg.chat.id, msg.from_user.id)
+
+    @dp.message(Command("mute"))
+    async def cmd_mute(message: Message):
+        if not await _is_admin_cmd(message):
+            return await message.reply("❌ Only admins can use this command.")
+        if message.reply_to_message:
+            target_id = message.reply_to_message.from_user.id
+            target_name = message.reply_to_message.from_user.first_name
+        else:
+            parts = (message.text or "").split()
+            if len(parts) < 2:
+                return await message.reply("Usage: reply to user or /mute <user_id>")
+            target_id = int(parts[1]); target_name = str(target_id)
         try:
-            await msg.delete()
-        except Exception:
-            pass
-        warns = load_warns()
-        key = f"{chat_id}:{user.id}"
-        warns[key] = warns.get(key, 0) + 1
-        save_warns(warns)
-        count = warns[key]
-        await msg.chat.send_message(f"⚠️ {user.first_name}, links are not allowed! Warning {count}/{WARN_LIMIT}.")
+            await bot.restrict_chat_member(message.chat.id, target_id, permissions=mute_perms(), until_date=int(time.time())+MUTE_DURATION_SECONDS)
+            await message.reply(f"🔇 {target_name} has been muted by admin.")
+        except Exception as e:
+            await message.reply(f"Failed to mute: {e}")
+
+    @dp.message(Command("unmute"))
+    async def cmd_unmute(message: Message):
+        if not await _is_admin_cmd(message):
+            return await message.reply("❌ Only admins can use this command.")
+        if message.reply_to_message:
+            target_id = message.reply_to_message.from_user.id
+            target_name = message.reply_to_message.from_user.first_name
+        else:
+            parts = (message.text or "").split()
+            if len(parts) < 2:
+                return await message.reply("Usage: reply to user or /unmute <user_id>")
+            target_id = int(parts[1]); target_name = str(target_id)
+        try:
+            await bot.restrict_chat_member(message.chat.id, target_id, permissions=unmute_perms())
+            await message.reply(f"🔊 {target_name} has been unmuted by admin.")
+        except Exception as e:
+            await message.reply(f"Failed to unmute: {e}")
+
+    @dp.message(Command("ban"))
+    async def cmd_ban(message: Message):
+        if not await _is_admin_cmd(message):
+            return await message.reply("❌ Only admins can use this command.")
+        if message.reply_to_message:
+            target_id = message.reply_to_message.from_user.id
+            target_name = message.reply_to_message.from_user.first_name
+        else:
+            parts = (message.text or "").split()
+            if len(parts) < 2:
+                return await message.reply("Usage: reply to user or /ban <user_id>")
+            target_id = int(parts[1]); target_name = str(target_id)
+        try:
+            await bot.ban_chat_member(message.chat.id, target_id)
+            await message.reply(f"⛔ {target_name} has been banned by admin.")
+        except Exception as e:
+            await message.reply(f"Failed to ban: {e}")
+
+    @dp.message(Command("unban"))
+    async def cmd_unban(message: Message):
+        if not await _is_admin_cmd(message):
+            return await message.reply("❌ Only admins can use this command.")
+        parts = (message.text or "").split()
+        if len(parts) < 2:
+            return await message.reply("Usage: /unban <user_id>")
+        target_id = int(parts[1])
+        try:
+            await bot.unban_chat_member(message.chat.id, target_id)
+            await message.reply(f"✅ User {target_id} has been unbanned by admin.")
+        except Exception as e:
+            await message.reply(f"Failed to unban: {e}")
+
+    @dp.message(Command("warn"))
+    async def cmd_warn(message: Message):
+        if not await _is_admin_cmd(message):
+            return await message.reply("❌ Only admins can use this command.")
+        if message.reply_to_message:
+            target_id = message.reply_to_message.from_user.id
+            target_name = message.reply_to_message.from_user.first_name
+        else:
+            parts = (message.text or "").split()
+            if len(parts) < 2:
+                return await message.reply("Usage: /warn <reply or user_id>")
+            target_id = int(parts[1]); target_name = str(target_id)
+        warns[target_id] += 1
+        count = warns[target_id]
+        await message.reply(f"⚠️ {target_name} warned ({count}/{WARN_LIMIT}).")
         if count >= WARN_LIMIT:
-            await msg.chat.restrict_member(user.id, permissions=ChatPermissions(can_send_messages=False))
-            await msg.chat.send_message(f"🔇 {user.first_name} has been muted after {WARN_LIMIT} warnings for links.")
-        return
+            try:
+                await bot.restrict_chat_member(message.chat.id, target_id, permissions=mute_perms(), until_date=int(time.time())+MUTE_DURATION_SECONDS)
+                await message.reply(f"🔇 {target_name} has been muted automatically after {WARN_LIMIT} warnings.")
+            except Exception:
+                pass
 
-    # Abusive check
-    if contains_bad_word(text):
-        try:
-            await msg.delete()
-        except Exception:
-            pass
-        warns = load_warns()
-        key = f"{chat_id}:{user.id}"
-        warns[key] = warns.get(key, 0) + 1
-        save_warns(warns)
-        count = warns[key]
-        await msg.chat.send_message(f"🚫 {user.first_name} used abusive language. Warning {count}/{WARN_LIMIT}.")
-        if count >= WARN_LIMIT:
-            await msg.chat.restrict_member(user.id, permissions=ChatPermissions(can_send_messages=False))
-            await msg.chat.send_message(f"🔇 {user.first_name} has been muted after {WARN_LIMIT} warnings for abusive language.")
-        return
+    @dp.message(Command("resetwarns"))
+    async def cmd_resetwarns(message: Message):
+        if not await _is_admin_cmd(message):
+            return await message.reply("❌ Only admins can use this command.")
+        if message.reply_to_message:
+            target_id = message.reply_to_message.from_user.id
+            warns[target_id] = 0
+            await message.reply("✅ Warnings reset.")
+        else:
+            await message.reply("Reply to user to reset warnings.")
 
-    # Spam detection: continuous messages from same user
-    st = SPAM_TRACK.get(chat_id, {"last_sender": None, "count": 0, "last_time": 0})
-    if st["last_sender"] == user.id:
-        st["count"] += 1
-    else:
-        st["last_sender"] = user.id
-        st["count"] = 1
-    st["last_time"] = int(time.time())
-    SPAM_TRACK[chat_id] = st
+    @dp.message(Command("admins"))
+    async def cmd_admins(message: Message):
+        admins = await bot.get_chat_administrators(message.chat.id)
+        mentions = []
+        for a in admins:
+            u = a.user
+            mentions.append(f"@{u.username}" if u.username else (u.first_name or str(u.id)))
+        await message.reply("Admins: " + ", ".join(mentions))
 
-    if st["count"] >= SPAM_THRESHOLD:
-        try:
-            await msg.chat.restrict_member(user.id, permissions=ChatPermissions(can_send_messages=False))
-            await msg.chat.send_message(f"🚫 {user.first_name} has been muted for spamming (continuous {SPAM_THRESHOLD} messages).")
-        except Exception:
-            pass
-        SPAM_TRACK[chat_id] = {"last_sender": None, "count": 0, "last_time": 0}
-        return
-
-# helpers
-async def _is_command_admin(update: Update):
-    user = update.effective_user
-    return user and user.id in ADMIN_IDS
-
-def _extract_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if msg.reply_to_message:
-        return msg.reply_to_message.from_user
-    if context.args:
-        try:
-            uid = int(context.args[0])
-            class U: pass
-            u = U(); u.id = uid; u.first_name = str(uid)
-            return u
-        except:
-            return None
-    return None
+    logging.info("Handlers registered.")
