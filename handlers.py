@@ -1,4 +1,4 @@
-import os, re, time, json, logging
+import os, re, time, json, logging, asyncio
 from collections import defaultdict
 from typing import Dict, List, Optional
 from aiogram import types, Bot, Dispatcher
@@ -16,7 +16,6 @@ MUTE_DURATION_SECONDS = 60*60*24*365*10  # ~10 years
 # Load abusive words from file (one per line)
 def load_abusive():
     if not os.path.exists(ABUSIVE_FILE):
-        # create example file
         sample = ["madarchod","behenchod","chutiya","bhosdike","randi","bc","mc","fuck","bitch","asshole"]
         with open(ABUSIVE_FILE, "w", encoding="utf-8") as f:
             f.write("\n".join(sample))
@@ -165,8 +164,10 @@ def register_handlers(dp: Dispatcher, bot: Bot, admin_ids: List[int] = None):
             spam_track[chat.id] = {"last_user": None, "count": 0}
             return
 
-    @dp.message(content_types=types.ContentType.NEW_CHAT_MEMBERS)
+    @dp.message()
     async def welcome(message: Message):
+        if not message.new_chat_members:
+            return
         for m in message.new_chat_members:
             await message.reply(f"👋 Welcome {m.first_name} to {message.chat.title}! Please be respectful and follow the group rules.")
 
@@ -280,5 +281,4 @@ def register_handlers(dp: Dispatcher, bot: Bot, admin_ids: List[int] = None):
         await message.reply("✅ Warnings reset.")
 
 def cleanup_on_shutdown(dp: Dispatcher, bot: Bot):
-    # placeholder for cleanup actions
     return asyncio.sleep(0)

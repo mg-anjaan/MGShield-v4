@@ -1,15 +1,10 @@
-GuardianX - Group Protection Bot (Aiogram v3)
+GroupGuardian - final ready-to-deploy bot package
 
-Deployment:
-1. Push contents to GitHub repo root.
-2. On Render, create a Web Service or Worker linked to the repo.
-3. Set environment variable BOT_TOKEN with your bot token.
-4. (Optional) Set ADMIN_IDS to comma-separated admin IDs (e.g. 7996780813).
-5. Build command: pip install -r requirements.txt
-6. Start command: python main.py
-7. Clear build cache on Render and deploy latest commit.
-
-Notes:
-- Edit abusive_words.txt locally to add or remove slurs (one per line).
-- Warnings persist in warnings.json in the repo (file-backed).
-- Spam tracking is in-memory (resets on restart).
+Deploy:
+1. Push files to GitHub root.
+2. Create Render service (Web Service or Worker) linked to this repo.
+3. Set BOT_TOKEN env var in Render (your bot token).
+4. (Optional) ADMIN_IDS env var: comma-separated admin IDs.
+5. Build: pip install -r requirements.txt
+6. Start: python main.py
+7. Clear build cache on Render and redeploy.
