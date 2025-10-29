@@ -24,10 +24,12 @@ dp = Dispatcher(storage=MemoryStorage())
 # The correct order is inside handlers/__init__.py, which this function calls.
 register_all_handlers(dp)
 
-# ===== TEST COMMAND =====
+# ===== TEST COMMAND (ADDED DIAGNOSTIC PRINT) =====
 @dp.message(Command("start"))
 async def start_cmd(message: Message):
-    # This command should now work after the command-skipping fix in filters/guards
+    # This print statement helps diagnose if the handler is being triggered
+    # If this prints in the Render logs, the bot received the message.
+    print(f"🤖 Received /start command from user: {message.from_user.id}") 
     await message.answer("🤖 MGShield bot is running and ready to protect your group!")
 
 # ===== SMALL WEB SERVER FOR RENDER (HEALTH CHECK) =====
