@@ -1,5 +1,5 @@
 from aiogram import Dispatcher, types
-from utils import delete_later
+from utils import delete_later # Ensure you have 'delete_later' imported
 
 user_message_count = {}
 
@@ -16,12 +16,27 @@ def setup_group_guard(dp: Dispatcher):
         key = (chat_id, user_id)
         if key not in user_message_count:
             user_message_count[key] = []
-        user_message_count[key].append(message.date.timestamp())
-        user_message_count[key] = [t for t in user_message_count[key] if message.date.timestamp() - t <= 10]
+        
+        # Record and clean timestamps
+        current_time = message.date.timestamp()
+        user_message_count[key].append(current_time)
+        user_message_count[key] = [t for t in user_message_count[key] if current_time - t <= 10]
 
         if len(user_message_count[key]) > 5:
-            await message.chat.restrict(user_id, permissions=types.ChatPermissions(can_send_messages=False), until_date=60)
+            # Action: Mute the user
+            await message.chat.restrict(
+                user_id, 
+                permissions=types.ChatPermissions(can_send_messages=False), 
+                until_date=60
+            )
+            
+            # Action: Send warning and schedule deletion
             warn = await message.reply("🤖 Flood detected! User muted for 1 minute.")
             await delete_later(warn, 10)
-
+            
+            # CRITICAL: Stop processing the message to prevent later handlers from unmuting
+            return 
+        
+        # If no flood, the function finishes and allows the message to continue to the next handlers
+        return # Explicit return for clarity
 
