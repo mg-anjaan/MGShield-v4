@@ -4,7 +4,7 @@ from aiogram.types import Message
 from utils import admins_list, delete_later
 
 def setup_admin_tag(dp: Dispatcher):
-    @dp.message(Command(["tagall","all"]))
+   @dp.message(Command("tagall", "all"))
     async def tag_all(message: Message):
         # admin-only
         admin_ids = await admins_list(message.chat)
