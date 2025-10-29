@@ -1,46 +1,41 @@
 import os
 from aiohttp import web
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import CommandStart
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-# Import all handlers
-from handlers.group_guard import setup_group_guard
-from handlers.moderation import setup_moderation
-from handlers.admin_tag import setup_admin_tag
-from handlers.welcome import setup_welcome
+# Import all handlers through __init__.py
+from handlers import register_handlers
 
-# ✅ Import for /start command (universal test)
-from aiogram import types
-from aiogram.filters import CommandStart
-
+# === BOT TOKEN & WEBHOOK SETUP ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN not set in environment variables.")
 
-WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+RENDER_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+if not RENDER_HOSTNAME:
+    raise ValueError("❌ RENDER_EXTERNAL_HOSTNAME not found! Make sure you're on Render environment.")
 
+WEBHOOK_URL = f"https://{RENDER_HOSTNAME}/webhook"
+
+# === INITIALIZE BOT & DISPATCHER ===
 bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
 dp = Dispatcher()
 
-# ✅ Universal test handler
+# === TEST HANDLER (/start) ===
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("✅ Bot is alive and connected via webhook!")
+    await message.answer("✅ MGShield is online and running smoothly via webhook!")
 
+# === DEBUG MESSAGE LOGGING ===
 @dp.message()
 async def all_msg(message: types.Message):
     print(f"📩 Message received: {message.text}")
-    # just confirm receiving messages
-    # uncomment below if needed for debugging
-    # await message.answer("✅ Received your message!")
 
-# Register your handlers
-setup_group_guard(dp)
-setup_moderation(dp)
-setup_admin_tag(dp)
-setup_welcome(dp)
+# === REGISTER ALL FEATURE HANDLERS ===
+register_handlers(dp)
 
-# Events
+# === LIFECYCLE EVENTS ===
 async def on_startup(app):
     await bot.set_webhook(WEBHOOK_URL)
     print(f"🚀 Webhook set to {WEBHOOK_URL}")
@@ -50,11 +45,11 @@ async def on_shutdown(app):
     await bot.session.close()
     print("🛑 Bot shutdown")
 
-# Simple ping route (for uptime check)
+# === SIMPLE PING ROUTE (for uptime) ===
 async def handle_ping(request):
     return web.Response(text="OK")
 
-# Aiohttp app
+# === CREATE WEB APP ===
 def create_app():
     app = web.Application()
     app.router.add_get("/ping", handle_ping)
@@ -66,6 +61,7 @@ def create_app():
     app.on_shutdown.append(on_shutdown)
     return app
 
+# === ENTRY POINT ===
 if __name__ == "__main__":
     app = create_app()
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
