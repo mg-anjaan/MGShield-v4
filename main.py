@@ -1,34 +1,61 @@
-import asyncio
 import os
-import logging
+import asyncio
 from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.client.bot import DefaultBotProperties
-from handlers import register_handlers, cleanup_on_shutdown
+from aiogram.filters import Command
+from aiohttp import web
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+from handlers.group_guard import setup_group_guard
+from handlers.moderation import setup_moderation
+from handlers.admin_tag import setup_admin_tag
+from handlers.welcome import setup_welcome
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    logging.error("BOT_TOKEN missing in env. Set it in Render environment variables.")
-    raise SystemExit(1)
+    print("❌ BOT_TOKEN not set. Set it in Render environment variables.")
+    # For local testing you can set BOT_TOKEN env var, but bot will not run without it.
 
-ADMIN_IDS = os.getenv("ADMIN_IDS", "")
-ADMIN_IDS_LIST = [int(x) for x in ADMIN_IDS.split(",") if x.strip()]
+bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+dp = Dispatcher()
 
-async def main():
-    default_props = DefaultBotProperties(parse_mode="HTML")
-    bot = Bot(token=BOT_TOKEN, default=default_props)
-    dp = Dispatcher(storage=MemoryStorage())
+# Register handlers
+setup_group_guard(dp)
+setup_moderation(dp)
+setup_admin_tag(dp)
+setup_welcome(dp)
 
-    register_handlers(dp, bot, admin_ids=ADMIN_IDS_LIST)
+async def on_startup():
+    print("Bot is starting...")
 
-    logging.info("✅ GroupGuardian is active (logs only). Starting polling...")
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await cleanup_on_shutdown(dp, bot)
-        await bot.session.close()
+async def on_shutdown():
+    await bot.session.close()
+    print("Bot is shutting down...")
+
+# Simple aiohttp server for Render self-ping (Option A)
+async def handle_ping(request):
+    return web.Response(text="OK")
+
+def create_app():
+    app = web.Application()
+    app.add_routes([web.get('/ping', handle_ping)])
+    return app
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Run both aiohttp server and aiogram dispatcher
+    loop = asyncio.get_event_loop()
+
+    # Start aiohttp in background
+    app = create_app()
+    runner = web.AppRunner(app)
+
+    async def start_services():
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", "8080")))
+        await site.start()
+        await on_startup()
+        # Start polling (Aiogram) - Dispatcher.start_polling blocks so run it as task
+        await dp.start_polling(bot)
+
+    try:
+        loop.run_until_complete(start_services())
+    except (KeyboardInterrupt, SystemExit):
+        loop.run_until_complete(on_shutdown())
