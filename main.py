@@ -1,62 +1,25 @@
+# main.py
+
 import os
 import asyncio
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types
-from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.filters import Command
+# ... other imports ...
 
-# ===== HANDLERS =====
-from handlers.group_guard import setup_group_guard
-from handlers.moderation import setup_moderation
-from handlers.admin_tag import setup_admin_tag
-from handlers.welcome import setup_welcome
+# === SIMPLIFIED HANDLERS IMPORT ===
+from handlers import register_all_handlers # <--- Import the function from __init__.py
+# Note: Delete all the individual `from handlers.xxx import setup_xxx` lines!
 
-# ===== BOT TOKEN =====
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    print("❌ BOT_TOKEN not found! Set it in Render environment variables.")
-    exit()
-
-# ===== INIT BOT =====
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
-dp = Dispatcher(storage=MemoryStorage())
+# ===== BOT TOKEN & INIT BOT =====
+# ... (BOT_TOKEN check and dp/bot creation is fine) ...
 
 # ===== REGISTER HANDLERS =====
-setup_group_guard(dp)
-setup_moderation(dp)
-setup_admin_tag(dp)
-setup_welcome(dp)
+# Delete all the old setup calls (e.g., setup_group_guard(dp))
+# and replace with:
+register_all_handlers(dp) # <--- ONE clean call
 
-# ===== TEST COMMAND =====
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer("🤖 Bot is running and ready to protect your group!")
-
-# ===== SMALL WEB SERVER FOR RENDER =====
-async def handle(request):
-    return web.Response(text="✅ MGShield bot is alive and running!")
-
-async def start_web():
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"🌐 Web server started on port {port}")
-
-# ===== MAIN =====
-async def main():
-    print("🚀 Bot is starting...")
-    # Start web server first
-    await start_web()
-    # Then start polling (single instance)
-    await dp.start_polling(bot)
+# ===== WEB SERVER FOR RENDER & MAIN =====
+# ... (start_web and main function logic is fine for Render) ...
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
 
