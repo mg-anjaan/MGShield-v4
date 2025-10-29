@@ -27,8 +27,62 @@ message_timestamps = {}
 RATE_LIMIT_COUNT = 5 # Max messages allowed
 RATE_LIMIT_PERIOD = 5 # In seconds
 
-# List of abusive words and keywords
-ABUSIVE_WORDS = ["spam", "abuse", "scam", "fuck", "shit", "bitch"] # Add your actual words here
+# List of abusive words and phrases used for content filtering.
+# This comprehensive list includes common English terms and transliterated Hindi (Hinglish) slang.
+ABUSIVE_WORDS = [
+    "badword", "chut", "bhosd", "examplebad",
+    # English abusive / sexual / vulgar
+    "fuck", "fucker", "motherfucker", "mf", "asshole", "bitch", "bastard", "dick", "cock", "pussy",
+    "slut", "whore", "nude", "suck", "shit", "crap", "dumb", "stupid", "idiot", "retard", "jerk",
+    "loser", "moron", "pervert", "porn", "boobs", "tits", "balls", "sex", "cum", "horny", "sperm",
+    "nipple", "handjob", "blowjob", "anal", "dildo", "vibrator", "lust", "suckmy", "deepthroat",
+    "banging", "fingering", "fuckboy", "fuckgirl", "fuckbuddy", "screw", "jerking", "jerkoff",
+    "nasty", "perv", "horn", "sucker", "cockhead", "puss", "pussie", "cumshot", "whoring", "moan",
+    "nudes", "strip", "threesome", "orgasm", "boob", "boobie", "ass", "asslick", "kissmyass",
+    
+    # Hindi transliterated / Hinglish
+    "chutiya", "chutiye", "chut", "chutmarika", "bhosdi", "bhosdike", "madarchod", "behenchod",
+    "lund", "randi", "gaand", "gand", "kutte", "kuttiya", "tatti", "haraami", "haraamzade",
+    "laude", "launde", "chinal", "choot", "gandu", "suar", "bakchod", "chakka", "teribaap",
+    "terimaa", "maa", "behen", "betichod", "lavde", "bhadwe", "bhadwa", "rakhail", "kamina",
+    "kamini", "nalayak", "ullu", "ullu ke pathe", "kutte ke", "kamine", "kutta", "bhosdiwala",
+    "moot", "mootra", "randi ke", "rand", "laundi", "beizzati", "madharchod", "suar ke bacche",
+    "behen ke laude", "maa ka", "behen ke", "beti ke", "aand", "aandu", "aandfaad", "chodu",
+    "choda", "chodna", "gaandmasti", "gaandfat", "madar", "bkl", "bsdk", "mc", "bc", "mkc", "chod",
+    "maderchod", "madarjod", "harami", "haramkhor", "haraamzada", "chinal", "kaminey", "rakhail",
+    "kutti", "kuttiya", "randwa", "randy", "tattiya", "beizzati", "beiman", "ullu ke bacche",
+    "tatte", "tatta", "tattya", "chutke", "chutiyon", "chutiyo", "bhosri", "bhonsdi", "bhonsda",
+    "behnchod", "madarchod", "bhenchod", "maa chod", "behen chod", "maa behen", "randichod",
+    "kutte kamine", "suar kamina", "gandfat", "gaandfaad", "chodh", "choda", "chodne", "chodna",
+    "randi", "randiwala", "randwa", "rakhail", "chinal", "launde", "lavda", "lavde", "launde ke",
+    "teri maa", "teri behen", "teri maa ki", "teri behen ki", "behen ke laude", "maa ke lode",
+    "maa ke laude", "baap chod", "betichod", "randichod", "kutte ke lode", "suar ke lode",
+    "gand mar", "gaand mar", "gand maar", "chod do", "chod de", "chodti", "chodta", "chodenge",
+    "chodoge", "randibaaz", "laundibaaz", "randi ke bache", "rand ke bache", "randi ka beta",
+    "randi ki aulad", "behen ki chut", "maa ki chut", "maa ka bharosa", "gand mein", "lund mein",
+    "launde ki", "laude ki", "laude ke", "chut ke", "chut ke andhar", "gand ke", "tatti ke",
+    "chut mai", "chut mein", "lund ke", "lund mai", "randi ke bacche", "randi ka loda",
+    "madarchod ke bache", "madarchod ka beta", "madarchod ki aulad", "behenchod ke bache",
+    "behenchod ka beta", "behenchod ki aulad", "randike", "bhosdike", "chutiyapa", "bakchodi",
+    "chutmarike", "bhosdiwala", "chodu saala", "saale", "saala", "sali", "saliye", "randwa ke",
+    "lauda", "launde", "laundi", "launde ke lode", "gand ke andhar", "chodkar", "chudiya",
+    "chud gaya", "chud gya", "chudegi", "chud ja", "chudne", "chudane", "chud gaya", "chud ja",
+    "chud rahi", "chud raha", "chudegi", "chudega", "chudne wali", "chudne wala", "randi log",
+    "randipan", "randbaazi", "laundapan", "rakhailpan", "kuttepan", "bhosdapan", "chutiyapan",
+    "ullu ka pattha", "ullu ka bacha", "ullu ke bacche", "ullu ka loda", "ullu ke lode",
+    "bhosdi ke", "madarchod ke", "bhen ke lode", "maa ke laude", "behen ke laude", "gand ke laude",
+    
+    # Mixed English-Hindi slang
+    "fuckall", "fattu", "jhatu", "jhant", "jhantoo", "jhantud", "jhantu", "jhantiyan", "jhantiyapa",
+    "jhantiyan", "chutmarika", "chodu", "laundey", "randipana", "bhosdapanti", "chutiyapanti",
+    "bakchodi", "bakchod", "faltu", "nalayak", "kutta kamina", "kaminey kutte", "chod ke", "chod gaya",
+    "chud gyi", "chud gyi thi", "chud gayi", "randibaaz", "randi bazaar", "randwa bazaar",
+    "madarchodgiri", "bhenchodgiri", "laundapanti", "rakhailgiri", "chinalgiri", "bakchodiya",
+    "ullu banaya", "ullu bna", "ullu bnata", "ullu bnayi", "ullu ka bandar", "ullu ka beta",
+    "randipanti", "bhosdapanti", "chodpanti", "chutiyapanti", "madarchodgiri", "randiya",
+    "randi log", "randi bazaar", "randi ki aulaad", "madarchod log", "behenchod log",
+    "randu", "randua", "randyu", "lauda lasun", "laude log", "chutiyalog", "madarchodlog"
+]
 
 # --- Helper Functions ---
 
