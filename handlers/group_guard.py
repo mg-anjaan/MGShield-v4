@@ -1,47 +1,27 @@
-from aiogram import Dispatcher
-from aiogram.types import Message
-from aiogram.enums import ChatType
-from utils import is_admin, contains_link, contains_abuse, is_forwarded, delete_later
+from aiogram import Dispatcher, types
+from utils import delete_later
+
+user_message_count = {}
 
 def setup_group_guard(dp: Dispatcher):
     @dp.message()
-    async def guard(message: Message):
-        # Only run in groups
-        if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+    async def group_protection(message: types.Message):
+        if message.chat.type not in ["group", "supergroup"]:
             return
 
-        # Admins are fully exempt
-        if await is_admin(message.chat, message.from_user.id):
-            return
+        user_id = message.from_user.id
+        chat_id = message.chat.id
 
-        # Forwarded messages block
-        if is_forwarded(message):
-            await message.reply("⚠️ Forwarded messages are not allowed here.")
-            await delete_later(message, 10)
-            try:
-                await message.delete()
-            except:
-                pass
-            return
+        # 🛡 Flood control (more than 5 msgs in 10 sec)
+        key = (chat_id, user_id)
+        if key not in user_message_count:
+            user_message_count[key] = []
+        user_message_count[key].append(message.date.timestamp())
+        user_message_count[key] = [t for t in user_message_count[key] if message.date.timestamp() - t <= 10]
 
-        # Link block
-        if contains_link(message):
-            await message.reply("⚠️ Links are not allowed here!")
-            await delete_later(message, 10)
-            try:
-                await message.delete()
-            except:
-                pass
-            return
+        if len(user_message_count[key]) > 5:
+            await message.chat.restrict(user_id, permissions=types.ChatPermissions(can_send_messages=False), until_date=60)
+            warn = await message.reply("🤖 Flood detected! User muted for 1 minute.")
+            await delete_later(warn, 10)
 
-        # Abusive word filter (Hindi + English)
-        if contains_abuse(message):
-            await message.reply("⚠️ Please avoid abusive language.")
-            await delete_later(message, 10)
-            try:
-                await message.delete()
-            except:
-                pass
-            return
 
-        # Simple flood control placeholder (expand as needed)
