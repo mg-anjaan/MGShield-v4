@@ -100,3 +100,18 @@ async def admins_list(chat: Chat):
         return [f"{m.user.first_name or m.user.id}:{m.user.id}" for m in res]
     except Exception:
         return []
+def extract_target_user(message):
+    """
+    Extract target user from reply or text command like '/warn @username' or '/warn user_id'
+    """
+    if message.reply_to_message:
+        return message.reply_to_message.from_user
+
+    text = (getattr(message, 'text', '') or '').strip().split()
+    if len(text) > 1:
+        possible = text[1]
+        if possible.startswith('@'):
+            return possible
+        if possible.isdigit():
+            return int(possible)
+    return None
