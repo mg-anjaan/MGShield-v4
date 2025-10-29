@@ -1,19 +1,28 @@
-from aiogram import Dispatcher
+from aiogram import types
 from aiogram.filters import Command
 from aiogram.types import Message
-from utils import admins_list, delete_later
 
-def setup_admin_tag(dp: Dispatcher):
-   @dp.message(Command("tagall", "all"))
+def setup_admin_tag(dp):
+    @dp.message(Command("tagall"))
     async def tag_all(message: Message):
-        # admin-only
-        admin_ids = await admins_list(message.chat)
-        if message.from_user.id not in [int(a.split(':')[-1]) if ':' in a else a for a in admin_ids]:
-            await message.reply("⚠️ Only admins can use this.")
+        if message.chat.type not in ["group", "supergroup"]:
+            await message.reply("❌ This command only works in groups.")
             return
-        # Build a short mention list (first names)
-        text = "🔔 Admins:\n"
-        for a in admin_ids:
-            text += f"- {a}\n"
-        await message.reply(text)
-        await delete_later(message, 10)
+
+        # Check if user is admin
+        member = await message.chat.get_member(message.from_user.id)
+        if member.status not in ["administrator", "creator"]:
+            await message.reply("❌ Only admins can tag everyone.")
+            return
+
+        # Get all members (limited by Telegram API)
+        members = []
+        async for m in message.chat.get_administrators():
+            members.append(m.user.mention_html())
+
+        if not members:
+            await message.reply("No members found to tag.")
+            return
+
+        tags = " ".join(members)
+        await message.reply(f"👥 Tagging everyone:\n\n{tags}", parse_mode="HTML")
