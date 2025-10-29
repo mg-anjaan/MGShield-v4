@@ -1,5 +1,6 @@
 from aiogram import Dispatcher
-from aiogram.types import Message, ChatType
+from aiogram.types import Message
+from aiogram.enums import ChatType
 from utils import is_admin, contains_link, contains_abuse, is_forwarded, delete_later
 
 def setup_group_guard(dp: Dispatcher):
