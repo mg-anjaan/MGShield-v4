@@ -20,13 +20,15 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ===== REGISTER HANDLERS =====
+# ===== REGISTER HANDLERS (Order is critical for filters/commands) =====
+# The correct order is inside handlers/__init__.py, which this function calls.
 register_all_handlers(dp)
 
 # ===== TEST COMMAND =====
 @dp.message(Command("start"))
 async def start_cmd(message: Message):
-    await message.answer("🤖 Bot is running and ready to protect your group!")
+    # This command should now work after the command-skipping fix in filters/guards
+    await message.answer("🤖 MGShield bot is running and ready to protect your group!")
 
 # ===== SMALL WEB SERVER FOR RENDER (HEALTH CHECK) =====
 async def handle(request):
@@ -51,11 +53,22 @@ async def main():
     # 1. Start web server first
     await start_web() 
     
-    # 2. 🔥 CONFLICT FIX: Delete existing connections before starting polling
-    print("🗑️ Clearing old webhook/polling sessions...")
-    await bot.delete_webhook(drop_pending_updates=True) 
+    # 2. 🔥 ROBUST CONFLICT FIX: Aggressive Webhook Deletion Loop
+    print("🗑️ Ensuring old webhook/polling sessions are cleared...")
     
-    # 3. Then start polling (single instance)
+    # Loop 5 times, waiting 1 second between attempts, to forcefully clear the old connection
+    for i in range(5):
+        try:
+            # We call delete_webhook even though we use polling; it clears *any* active session.
+            await bot.delete_webhook(drop_pending_updates=True)
+            print(f"✅ Connection cleared successfully (Attempt {i+1}).")
+            break # Exit loop if successful
+        except Exception as e:
+            # This catches potential network/API issues during the deletion process
+            print(f"⚠️ Deletion failed (Attempt {i+1}): {e}. Retrying in 1 second...")
+            await asyncio.sleep(1)
+    
+    # 3. Start polling
     print("📡 Starting Long Polling...")
     await dp.start_polling(bot)
 
