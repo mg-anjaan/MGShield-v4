@@ -50,10 +50,10 @@ async def start_web():
 # ===== MAIN =====
 async def main():
     print("🚀 Bot is starting...")
-    await asyncio.gather(
-        dp.start_polling(bot),
-        start_web()
-    )
+    # Start web server first
+    await start_web()
+    # Then start polling (single instance)
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
