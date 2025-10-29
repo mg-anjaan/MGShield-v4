@@ -1,8 +1,10 @@
-from aiogram import Dispatcher
-from . import group_guard, moderation, admin_tag, welcome
+from .group_guard import setup_group_guard
+from .moderation import setup_moderation
+from .admin_tag import setup_admin_tag
+from .welcome import setup_welcome
 
-def register_handlers(dp: Dispatcher):
-    group_guard.setup_group_guard(dp)
-    moderation.setup_moderation(dp)
-    admin_tag.setup_admin_tag(dp)
-    welcome.setup_welcome(dp)
+def register_handlers(dp):
+    setup_group_guard(dp)
+    setup_moderation(dp)
+    setup_admin_tag(dp)
+    setup_welcome(dp)
