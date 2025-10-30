@@ -4,7 +4,7 @@ from aiogram.types import Message
 from aiogram.exceptions import TelegramBadRequest
 
 # Import utilities
-from .utils import is_admin
+from utils import is_admin
 
 router = Router()
 
