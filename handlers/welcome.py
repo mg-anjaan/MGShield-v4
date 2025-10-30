@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 
 # Import utilities
-from .utils import delete_later, get_welcome_message, set_welcome_message, is_admin
+from utils import delete_later, get_welcome_message, set_welcome_message, is_admin
 
 router = Router()
 
