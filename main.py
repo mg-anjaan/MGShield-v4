@@ -6,7 +6,7 @@ from aiogram.fsm.storage.redis import RedisStorage, Redis
 from aiogram.exceptions import TelegramNetworkError
 
 # Import the registration function from your 'handler' directory package
-from handler import register_all_handlers 
+from handlers import register_all_handlers 
 from utils import init_db
 
 # --- Configuration ---
