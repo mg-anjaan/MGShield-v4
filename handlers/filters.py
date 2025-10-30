@@ -3,8 +3,7 @@ from aiogram.types import Message
 from aiogram.exceptions import TelegramBadRequest
 
 # Import utilities
-from utils import is_admin, extract_target_user, delete_later, warn_user, get_warn_count, parse_time
-
+from utils import contains_link, contains_abuse, is_admin, delete_later, warn_user, check_for_kick
 router = Router()
 
 # --- Helper Function (Includes Warning/Kick Logic) ---
