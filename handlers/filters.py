@@ -18,6 +18,15 @@ async def delete_and_notify(message: Message, reason: str):
     except Exception:
         pass
 
+# --- Filter Function (Returns True if message should be SKIPPED) ---
+async def check_if_admin_or_bot(message: Message) -> bool:
+    """Returns True if the user is an admin or a bot (meaning the filter should skip them)."""
+    if message.chat.type not in ["group", "supergroup"]:
+        return True # Skip private chats from filter logic
+    if message.from_user.is_bot:
+        return True
+    return await is_admin(message.chat, message.from_user.id)
+
 # --- Main Setup Function ---
 def setup_filters(dp: Dispatcher):
     """Registers a set of handlers for anti-spam, anti-link, and the final catch-all."""
@@ -26,23 +35,9 @@ def setup_filters(dp: Dispatcher):
     # 1. ANTI-SPAM / ANTI-LINK HANDLER (Highest priority within this router)
     # ----------------------------------------------------------------------
     
-    # We use a filter to ONLY match messages that are NOT commands and are NOT from an admin/bot.
-    # The 'Command' filter is the robust way to exclude commands.
-    
-    async def admin_or_bot_check(message: Message) -> bool:
-        """Returns True if the user is an admin or a bot (we skip these)."""
-        if message.chat.type not in ["group", "supergroup"]:
-            return True # Skip private chats from filter logic
-        if message.from_user.is_bot:
-            return True
-        return await is_admin(message.chat, message.from_user.id)
-
-
     @dp.message(
-        F.text,                                 # Must have text
-        ~Command(commands=['start', 'help']),   # Exclude basic commands that might not be in moderation
-        ~admin_or_bot_check,                    # Skip admins and bots
-        F.text.startswith('/'),                 # Only if it's NOT a command (this is to catch any remaining text)
+        F.text,                                       # Must have text
+        ~F.func(check_if_admin_or_bot),               # ✅ FIX: Invert the result of the function
         
         # CRITICAL FILTER: Only check messages that contain a link or abuse
         (F.text.func(contains_link) | F.text.func(contains_abuse))
@@ -60,9 +55,6 @@ def setup_filters(dp: Dispatcher):
             await delete_and_notify(message, "abusive language")
             return # Stop processing the update here
             
-        # Note: If no filter matches, the message passes through to the next handler.
-
-
     # ----------------------------------------------------------------------
     # 2. FINAL CATCH-ALL / UNKNOWN COMMAND HANDLER (Lowest priority in all routers)
     # ----------------------------------------------------------------------
@@ -74,7 +66,7 @@ def setup_filters(dp: Dispatcher):
         more specific handler (Commands, Specific Content Filters, etc.).
         """
         
-        # Skip private chats, if you want your bot to only reply in groups/supergroups
+        # Skip private chats
         if message.chat.type not in ["group", "supergroup"]:
             return
             
@@ -84,11 +76,5 @@ def setup_filters(dp: Dispatcher):
             await message.reply("Sorry, I don't recognize that command. Use /help to see what I can do.")
             return
 
-        # If it's a non-command, non-spam message that fell through all handlers,
-        # it's a general text/media update. You can add your echo/default logic here.
-        # Example:
-        # if message.text:
-        #     await message.answer("Thanks for the message!")
-
-        # Since this is the LAST handler, we don't need a return, but it's good practice.
+        # You can add your general message/echo logic here if needed.
         return
