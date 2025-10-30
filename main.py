@@ -12,7 +12,9 @@ from utils import init_db
 # --- Configuration ---
 # IMPORTANT: Bot will look for these environment variables
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost") 
+# Change the default fallback from "localhost" to Railway's most reliable internal address
+# This ensures that even if REDIS_HOST is empty or invalid, the bot uses the correct host.
+REDIS_HOST = os.getenv("REDIS_HOST", "redis.railway.internal")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379)) 
 
 # --- Setup Logging ---
