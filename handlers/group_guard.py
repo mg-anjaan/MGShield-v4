@@ -38,7 +38,7 @@ async def restrict_user_and_notify(message: Message, duration_minutes: int, reas
     except Exception as e:
         logger.error(f"❌ Failed to restrict user {message.from_user.id} in {message.chat.id}: {e}")
 
-@router.message(F.text.as_()) 
+@router.message(F.text)
 async def flood_control_handler(message: Message, state: FSMContext, bot: Bot):
     """Handler for persistent flood control using Redis list operations."""
 
