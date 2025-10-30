@@ -30,8 +30,8 @@ async def delete_and_warn(message: Message, reason: str):
 # --- ANTI-SPAM / ANTI-LINK HANDLER ---
 # Processes messages that contain text, photo, or video (to check captions/entities)
 @router.message(
-    F.text.as_() | F.caption.as_() | F.photo.as_() | F.video.as_(), 
-    ~F.text.startswith('/') # Ignore messages starting with a slash
+    F.text | F.caption | F.photo | F.video, 
+    ~F.text.startswith('/') 
 )
 async def content_filter(message: Message, bot: Bot):
     """Checks for prohibited content (links, abuse) and deletes/warns the user."""
