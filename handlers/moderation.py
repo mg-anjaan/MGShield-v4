@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from datetime import datetime, timedelta
 
 # Import utilities
-from .utils import is_admin, extract_target_user, delete_later, warn_user, get_warn_count, parse_time
+from utils import is_admin, extract_target_user, delete_later, warn_user, get_warn_count, parse_time
 
 router = Router()
 
