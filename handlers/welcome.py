@@ -1,45 +1,65 @@
-from aiogram import Dispatcher
+from aiogram import Router, Bot, F
 from aiogram.types import ChatMemberUpdated, Message
 from aiogram.filters import Command
-from utils import delete_later, get_welcome_message, set_welcome_message, is_admin
+from aiogram.exceptions import TelegramBadRequest
 
-def setup_welcome(dp: Dispatcher):
-    
-    # 1. COMMAND: Set Custom Welcome Message
-    @dp.message(Command("setwelcome"))
-    async def cmd_set_welcome(message: Message):
-        if message.chat.type not in ["group", "supergroup"]:
-            return await message.reply("This command only works in groups.")
-            
-        if not await is_admin(message.chat, message.from_user.id):
-            return await message.reply("⚠️ Only admins can set the welcome message.")
+# Import utilities
+from .utils import delete_later, get_welcome_message, set_welcome_message, is_admin
 
-        # Extract message content after /setwelcome
-        new_message = message.text.split(maxsplit=1)[1].strip() if len(message.text.split()) > 1 else None
+router = Router()
 
-        if not new_message:
-            return await message.reply("Usage: `/setwelcome <Your message here>`. Use `{user_name}` as a placeholder for the user's name.")
+# --- COMMAND: Set Custom Welcome Message ---
+@router.message(Command("setwelcome"))
+async def cmd_set_welcome(message: Message, bot: Bot):
+    chat_id = message.chat.id
 
-        await set_welcome_message(message.chat.id, new_message)
-        await message.reply(f"✅ Welcome message saved! New message:\n\n{new_message}")
-        await delete_later(message, 10)
-
-
-    # 2. HANDLER: Send Welcome Message on Join
-    @dp.chat_member()
-    async def on_user_join(event: ChatMemberUpdated):
-        new = event.new_chat_member
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("This command only works in groups.")
         
-        # Only greet if the user changed status to 'member' or 'restricted' (and can send messages)
-        if new.status in ('member', 'restricted') and new.user.id != event.bot.id and new.user.id != event.from_user.id:
-            
-            # Fetch custom message from DB (or get default)
-            custom_msg = await get_welcome_message(event.chat.id)
+    if not await is_admin(bot, chat_id, message.from_user.id):
+        return await message.reply("⚠️ Only admins can set the welcome message.")
 
-            # Format the message
-            user_name = new.user.first_name or 'there'
-            final_msg = custom_msg.replace('{user_name}', user_name)
+    parts = message.text.split(maxsplit=1)
+    new_message = parts[1].strip() if len(parts) > 1 else None
 
-            # Send and schedule deletion
-            sent = await event.chat.send_message(final_msg)
-            await delete_later(sent, 10)
+    if not new_message:
+        return await message.reply("Usage: `/setwelcome <Your message here>`. Use `{user_name}` as a placeholder for the user's name.", parse_mode="Markdown")
+
+    try:
+        await set_welcome_message(chat_id, new_message)
+        # Use Markdown for placeholder emphasis
+        await message.reply(f"✅ Welcome message saved! New message:\n\n`{new_message}`", parse_mode="Markdown")
+    except Exception:
+         await message.reply("❌ An error occurred while saving the welcome message to the database.")
+         
+    await delete_later(message, 10)
+
+
+# --- HANDLER: Send Welcome Message on Join ---
+@router.chat_member(F.new_chat_member.is_member) # Only process status change TO 'member'
+async def on_user_join(event: ChatMemberUpdated):
+    new = event.new_chat_member
+    chat_id = event.chat.id
+    
+    # Only greet users, not the bot itself
+    if new.user.id == event.bot.id:
+        return
+    
+    # 1. Fetch custom message
+    custom_msg = await get_welcome_message(chat_id)
+
+    # 2. Format the message
+    user_name = new.user.full_name or new.user.first_name or 'there'
+    # Use HTML for better formatting of the user's name
+    final_msg = custom_msg.replace('{user_name}', f"<b>{user_name}</b>") 
+    
+    # 3. Send and schedule deletion
+    try:
+        sent = await event.bot.send_message(chat_id, final_msg, parse_mode="HTML")
+        await delete_later(sent, 10)
+    except Exception:
+         pass # Silently fail if unable to send/delete
+
+# Registration function
+def setup_welcome(dp: Router):
+    dp.include_router(router)
