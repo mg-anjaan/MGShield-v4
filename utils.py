@@ -3,7 +3,6 @@ import asyncio
 import sqlite3
 from datetime import timedelta, datetime
 from aiogram.types import Chat, Message
-from aiogram import Bot
 
 # --- CONFIGURATION ---
 DB_NAME = 'bot_data.db' 
@@ -17,6 +16,7 @@ ABUSIVE = {
 }
 
 # --- REGEX ---
+# Pattern to match http, https, t.me, telegram.me, or simple domain names followed by /
 _link_re = re.compile(r"https?://|t\.me/|telegram\.me/|\.\w{2,3}/", re.IGNORECASE)
 
 # --- DATABASE SETUP ---
@@ -46,7 +46,6 @@ def init_db():
 # --- ADMIN CHECK ---
 async def is_admin(chat: Chat, user_id: int) -> bool:
     try:
-        # Use message.chat.get_member(user_id) if called from a Message handler
         member = await chat.get_member(user_id)
         return member.status in ('administrator', 'creator')
     except Exception:
@@ -56,11 +55,11 @@ async def is_admin(chat: Chat, user_id: int) -> bool:
 def contains_link(message: Message) -> bool:
     text = (getattr(message, 'text', '') or '') + ' ' + (getattr(message, 'caption', '') or '')
 
-    # 1. Check for basic link patterns in text
+    # 1. Check for basic link patterns in text/caption
     if bool(_link_re.search(text)):
         return True
 
-    # 2. Check message entities (for embedded links)
+    # 2. Check message entities (for embedded links, clickable text, etc.)
     entities = message.entities or message.caption_entities
     if entities:
         for entity in entities:
@@ -72,7 +71,8 @@ def contains_link(message: Message) -> bool:
 
 # --- FORWARD CHECK ---
 def is_forwarded(message: Message) -> bool:
-    return getattr(message, 'forward_from', None) or getattr(message, 'forward_sender_name', None)
+    return getattr(message, 'forward_from', None) or getattr(message, 'forward_sender_name', None) or getattr(message, 'forward_from_chat', None)
+
 
 # --- ABUSIVE CHECK ---
 def contains_abuse(message: Message) -> bool:
@@ -94,6 +94,7 @@ def _update_warning_db(chat_id: int, user_id: int) -> int:
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
+    # 1. Get current count
     cursor.execute(
         "SELECT count FROM warnings WHERE chat_id = ? AND user_id = ?",
         (chat_id, user_id)
@@ -102,6 +103,7 @@ def _update_warning_db(chat_id: int, user_id: int) -> int:
     current_warns = result[0] if result else 0
     new_warns = current_warns + 1
 
+    # 2. Update/Insert
     if result:
         cursor.execute(
             "UPDATE warnings SET count = ? WHERE chat_id = ? AND user_id = ?",
@@ -138,6 +140,7 @@ def _set_welcome_db(chat_id: int, message: str):
     """Synchronous database operation to set welcome message."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    # Use INSERT OR REPLACE to update if the chat_id already exists
     cursor.execute(
         "INSERT OR REPLACE INTO settings (chat_id, welcome_msg) VALUES (?, ?)",
         (chat_id, message)
@@ -151,17 +154,19 @@ async def set_welcome_message(chat_id: int, message: str):
 
 # --- PARSE MUTE TIME STRING (e.g. '10m', '2h', '1d') ---
 def parse_time(time_str: str) -> int:
-    # ... (Your existing correct parse_time function remains)
-    if not time_str:
-        return 60
+    if not time_str or not time_str[-1].isalpha() or not time_str[:-1].isdigit():
+        return 60 # Default to 1 minute
+        
     unit = time_str[-1].lower()
-    value = int(time_str[:-1]) if time_str[:-1].isdigit() else 1
+    value = int(time_str[:-1])
+    
     if unit == 'm':
         return value * 60
     if unit == 'h':
         return value * 3600
     if unit == 'd':
         return value * 86400
+        
     return 60
 
 # --- EXTRACT TARGET USER (FIXED for Reliability) ---
@@ -182,7 +187,7 @@ def extract_target_user(message):
         if len(parts) > 1:
             mute_time_seconds = parse_time(parts[1])
 
-    # 2. Handle Text Command
+    # 2. Handle Text Command (ID or Mention)
     elif len(parts) >= 2:
         target_part = parts[1]
         if len(parts) > 2:
@@ -192,11 +197,11 @@ def extract_target_user(message):
         if target_part.isdigit():
             target_user_id = int(target_part)
         
-        # B. Mention Entity (Less reliable, but we'll try to extract the user ID)
+        # B. Mention Entity (Extract ID from the entity)
         elif message.entities and message.entities[0].type == 'text_mention' and message.entities[0].user:
             target_user_id = message.entities[0].user.id
         
-        # C. Username String (@user) - Can't be used directly for restrict/ban without lookup, so we return None to force reply/ID.
+        # C. Plain @username string (requires separate API lookup, which we avoid here for simplicity)
         else:
             return None 
 
