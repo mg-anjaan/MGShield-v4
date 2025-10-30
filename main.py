@@ -20,7 +20,7 @@ from handlers.group_guard import setup_group_guard
 from handlers.admin_tag import setup_admin_tag
 from handlers.welcome import setup_welcome
 from handlers.filters import setup_filters
-from utils import init_db, DB_NAME, delete_later 
+from utils import init_db, DB_NAME, delete_later # Assuming these are correct
 
 # --- Configuration and Initialization ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -48,25 +48,33 @@ else:
 dp = Dispatcher(storage=storage)
 
 def register_all_handlers(dp):
-    """Registers all feature handlers with the Dispatcher."""
-    # 1. Filters and Guards FIRST (These delete/restrict messages)
-    setup_filters(dp)
-    setup_group_guard(dp) 
+    """
+    Registers all feature handlers with the Dispatcher.
+    Order is CRITICAL: Most specific (Commands) first, broadest (Filters/Guards) last.
+    """
+    
+    # 1. COMMAND HANDLERS & SPECIFIC FEATURES (Check /start, /ban, /admin first)
+    # If a message is a command, it will be handled here and skip the later, broader filters.
+    logger.info("Setting up Command and Specific handlers...")
+    setup_moderation(dp) # Commands like /ban, /mute
+    setup_admin_tag(dp)  # Specific commands or updates related to admin tags
+    setup_welcome(dp)    # Specific update for new member joined
 
-    # 2. Command Handlers and Specific Updates (These handle commands)
-    setup_moderation(dp)
-    setup_admin_tag(dp)
-    setup_welcome(dp) 
+    # 2. BROAD FILTERS and GUARDS (Check for spam, links, and handle general messages last)
+    # These contain broad filters (like F.text.contains or the final catch-all)
+    # They should only be reached if the message was NOT a command.
+    logger.info("Setting up Broad Filters and Guards...")
+    setup_filters(dp)     # Spam, Links, Abuse detection, and the final "Unknown Command" catch-all
+    setup_group_guard(dp) # General group restrictions
 
 # --- Main Execution ---
 async def main():
     logger.info("🚀 Bot is starting...")
     
     # 1. Initialize Database (for Warnings and Settings)
-    # The utils.init_db function will create the bot_data.db file (SQLite persistence)
     init_db() 
 
-    # 2. Register all handlers
+    # 2. Register all handlers with the corrected order
     register_all_handlers(dp)
     
     # 3. Clear stale sessions and start polling
