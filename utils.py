@@ -1,30 +1,29 @@
-import re
 import asyncio
+import re
 import sqlite3
 from datetime import timedelta, datetime
-from aiogram.types import Chat, Message
+from typing import Optional, Tuple, Dict, Any
+
+from aiogram import Bot
+from aiogram.types import Message, ChatMemberAdministrator, ChatMemberOwner, ChatPermissions
+from aiogram.exceptions import TelegramBadRequest
 
 # --- CONFIGURATION ---
-DB_NAME = 'bot_data.db' 
-
-# The vast ABUSIVE set remains in place but is omitted for brevity here.
+DB_NAME = 'bot_data.db'
+WARNING_THRESHOLD = 3
+DEFAULT_WELCOME = "👋 Welcome to the group, {user_name}! Please read the rules."
 ABUSIVE = {
-     "fuck", "fucker", "motherfucker", "bitch", "bastard", "asshole", "slut", "whore", "porn", "nude", "sex", "horny",
-     "madarchod", "behenchod", "bhosdike", "chutiya", "gandu", "lund", "randi", "gaand", "tatti", "kutte", "suar",
-     "rakhail", "harami", "bsdk", "mc", "bc", "chod", "chodu", "lavde", "laude", "launde", "randwa", "randipana",
-     "bhosdapan", "madarchodgiri", "bhenchodgiri", "ullu ke pathe", "ullu ka bacha", "maa ke lode", "behen ke laude"
+    "fuck", "fucker", "motherfucker", "bitch", "bastard", "asshole", "slut", "whore", "porn", "nude", "sex", "horny",
+    "madarchod", "behenchod", "bhosdike", "chutiya", "gandu", "lund", "randi", "gaand", "tatti", "kutte", "suar",
+    "rakhail", "harami", "bsdk", "mc", "bc", "chod", "chodu", "lavde", "laude", "launde", "randwa", "randipana",
+    "bhosdapan", "madarchodgiri", "bhenchodgiri", "ullu ke pathe", "ullu ka bacha", "maa ke lode", "behen ke laude"
 }
-
-# --- REGEX ---
-# Pattern to match http, https, t.me, telegram.me, or simple domain names followed by /
 _link_re = re.compile(r"https?://|t\.me/|telegram\.me/|\.\w{2,3}/", re.IGNORECASE)
 
 # --- DATABASE SETUP ---
 def init_db():
-    """Initializes the SQLite database and creates necessary tables."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # 1. Warnings Table (for persistent user warnings)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS warnings (
             chat_id INTEGER NOT NULL,
@@ -33,7 +32,6 @@ def init_db():
             PRIMARY KEY (chat_id, user_id)
         )
     """)
-    # 2. Settings Table (for custom welcome messages, etc.)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             chat_id INTEGER PRIMARY KEY,
@@ -44,167 +42,151 @@ def init_db():
     conn.close()
 
 # --- ADMIN CHECK ---
-async def is_admin(chat: Chat, user_id: int) -> bool:
+async def is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     try:
-        member = await chat.get_member(user_id)
+        member = await bot.get_chat_member(chat_id, user_id)
         return member.status in ('administrator', 'creator')
     except Exception:
         return False
 
-# --- LINK CHECK (FIXED for Entities and Forwarded Links) ---
+# --- FILTER CHECKS ---
 def contains_link(message: Message) -> bool:
     text = (getattr(message, 'text', '') or '') + ' ' + (getattr(message, 'caption', '') or '')
-
-    # 1. Check for basic link patterns in text/caption
-    if bool(_link_re.search(text)):
-        return True
-
-    # 2. Check message entities (for embedded links, clickable text, etc.)
+    if bool(_link_re.search(text)): return True
     entities = message.entities or message.caption_entities
     if entities:
         for entity in entities:
-            # Check for explicitly formatted links (URL or clickable text)
-            if entity.type in ('url', 'text_link'):
-                return True
-                
+            if entity.type in ('url', 'text_link'): return True
     return False
 
-# --- FORWARD CHECK ---
 def is_forwarded(message: Message) -> bool:
     return getattr(message, 'forward_from', None) or getattr(message, 'forward_sender_name', None) or getattr(message, 'forward_from_chat', None)
 
-
-# --- ABUSIVE CHECK ---
 def contains_abuse(message: Message) -> bool:
     text = (getattr(message, 'text', '') or '') + ' ' + (getattr(message, 'caption', '') or '')
     words = re.findall(r"[\w']+", text.lower())
     return any(w in ABUSIVE for w in words)
 
 # --- DELETE MESSAGE LATER ---
-async def delete_later(message, delay: int = 10):
+async def delete_later(message: Message, delay: int = 10):
     try:
         await asyncio.sleep(delay)
         await message.delete()
     except Exception:
         pass
 
-# --- WARN SYSTEM (PERSISTENT FIX) ---
-def _update_warning_db(chat_id: int, user_id: int) -> int:
-    """Synchronous database operation for updating warnings."""
+# --- WARN SYSTEM (PERSISTENT) ---
+def _update_warning_db(chat_id: int, user_id: int, reset: bool = False) -> int:
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    if reset:
+        cursor.execute("DELETE FROM warnings WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+        conn.commit()
+        conn.close()
+        return 0
 
-    # 1. Get current count
-    cursor.execute(
-        "SELECT count FROM warnings WHERE chat_id = ? AND user_id = ?",
-        (chat_id, user_id)
-    )
+    cursor.execute("SELECT count FROM warnings WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
     result = cursor.fetchone()
     current_warns = result[0] if result else 0
     new_warns = current_warns + 1
 
-    # 2. Update/Insert
     if result:
-        cursor.execute(
-            "UPDATE warnings SET count = ? WHERE chat_id = ? AND user_id = ?",
-            (new_warns, chat_id, user_id)
-        )
+        cursor.execute("UPDATE warnings SET count = ? WHERE chat_id = ? AND user_id = ?", (new_warns, chat_id, user_id))
     else:
-        cursor.execute(
-            "INSERT INTO warnings (chat_id, user_id, count) VALUES (?, ?, ?)",
-            (chat_id, user_id, new_warns)
-        )
+        cursor.execute("INSERT INTO warnings (chat_id, user_id, count) VALUES (?, ?, ?)", (chat_id, user_id, new_warns))
 
     conn.commit()
     conn.close()
     return new_warns
 
-async def warn_user(chat_id: int, user_id: int) -> int:
-    """Runs the blocking database update asynchronously."""
-    return await asyncio.to_thread(_update_warning_db, chat_id, user_id)
+async def warn_user(chat_id: int, user_id: int, reset: bool = False) -> int:
+    return await asyncio.to_thread(_update_warning_db, chat_id, user_id, reset)
+
+async def get_warn_count(chat_id: int, user_id: int) -> int:
+    def _get():
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count FROM warnings WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else 0
+    return await asyncio.to_thread(_get)
+
+async def check_for_kick(message: Message, new_warns: int):
+    if new_warns >= WARNING_THRESHOLD:
+        user_id = message.from_user.id
+        chat_id = message.chat.id
+        bot = message.bot
+        
+        # Temporary ban for 1 minute to ensure kick
+        kick_until = datetime.now() + timedelta(minutes=1)
+        try:
+            await bot.ban_chat_member(chat_id, user_id, until_date=kick_until)
+            # Immediately unban to allow rejoin
+            await bot.unban_chat_member(chat_id, user_id) 
+            await warn_user(chat_id, user_id, reset=True)
+            await message.answer(
+                f"🚨 **{message.from_user.full_name}** was KICKED for reaching the warning limit ({WARNING_THRESHOLD} warns). Warnings reset.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await message.answer(f"⚠️ KICK FAILED. Bot lacks permission or error: {e}")
 
 # --- WELCOME MESSAGE UTILITIES ---
-def _get_welcome_db(chat_id: int) -> str:
-    """Synchronous database operation to fetch welcome message."""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT welcome_msg FROM settings WHERE chat_id = ?", (chat_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else "👋 Welcome {user_name}! Please read the rules."
-
 async def get_welcome_message(chat_id: int) -> str:
-    return await asyncio.to_thread(_get_welcome_db, chat_id)
-
-def _set_welcome_db(chat_id: int, message: str):
-    """Synchronous database operation to set welcome message."""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    # Use INSERT OR REPLACE to update if the chat_id already exists
-    cursor.execute(
-        "INSERT OR REPLACE INTO settings (chat_id, welcome_msg) VALUES (?, ?)",
-        (chat_id, message)
-    )
-    conn.commit()
-    conn.close()
+    def _get():
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT welcome_msg FROM settings WHERE chat_id = ?", (chat_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else DEFAULT_WELCOME
+    return await asyncio.to_thread(_get)
 
 async def set_welcome_message(chat_id: int, message: str):
-    await asyncio.to_thread(_set_welcome_db, chat_id, message)
+    def _set():
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO settings (chat_id, welcome_msg) VALUES (?, ?)",
+            (chat_id, message)
+        )
+        conn.commit()
+        conn.close()
+    await asyncio.to_thread(_set)
 
-
-# --- PARSE MUTE TIME STRING (e.g. '10m', '2h', '1d') ---
+# --- PARSE TIME AND EXTRACT USER ---
 def parse_time(time_str: str) -> int:
     if not time_str or not time_str[-1].isalpha() or not time_str[:-1].isdigit():
-        return 60 # Default to 1 minute
-        
+        return 3600
     unit = time_str[-1].lower()
     value = int(time_str[:-1])
-    
-    if unit == 'm':
-        return value * 60
-    if unit == 'h':
-        return value * 3600
-    if unit == 'd':
-        return value * 86400
-        
-    return 60
+    if unit == 'm': return value * 60
+    if unit == 'h': return value * 3600
+    if unit == 'd': return value * 86400
+    return 3600
 
-# --- EXTRACT TARGET USER (FIXED for Reliability) ---
-def extract_target_user(message):
-    """
-    Extract (user_id, until_date_seconds) from reply or command text.
-    Returns (user_id: int, seconds: int) or None.
-    """
+def extract_target_user(message: Message) -> Optional[Tuple[int, int]]:
     parts = message.text.strip().split()
-    
     target_user_id = None
-    mute_time_seconds = 60 # Default to 1 minute
+    mute_time_seconds = 3600
 
-    # 1. Handle Reply
     if message.reply_to_message:
         target_user_id = message.reply_to_message.from_user.id
-        # Mute time is the argument after the command (parts[1], if present)
         if len(parts) > 1:
             mute_time_seconds = parse_time(parts[1])
 
-    # 2. Handle Text Command (ID or Mention)
     elif len(parts) >= 2:
         target_part = parts[1]
         if len(parts) > 2:
             mute_time_seconds = parse_time(parts[2])
-
-        # A. Numeric ID (Most reliable)
         if target_part.isdigit():
             target_user_id = int(target_part)
-        
-        # B. Mention Entity (Extract ID from the entity)
         elif message.entities and message.entities[0].type == 'text_mention' and message.entities[0].user:
             target_user_id = message.entities[0].user.id
-        
-        # C. Plain @username string (requires separate API lookup, which we avoid here for simplicity)
         else:
             return None 
 
     if target_user_id:
-        return (target_user_id, mute_time_seconds)
+        return (target_user_id, int((datetime.now() + timedelta(seconds=mute_time_seconds)).timestamp()))
     return None
