@@ -7,7 +7,7 @@ from aiogram.types import Message, ChatPermissions
 from aiogram.fsm.context import FSMContext
 
 # Import utilities
-from .utils import delete_later, is_admin
+from utils import delete_later, is_admin
 
 logger = logging.getLogger(__name__)
 
