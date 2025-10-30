@@ -10,9 +10,15 @@ from aiogram.types import Message, ChatPermissions, ChatMemberAdministrator, Cha
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 
-# --- Configuration ---
-BOT_TOKEN = "YOUR_BOT_TOKEN" 
+# --- Configuration & Setup ---
+
+# ✅ BEST PRACTICE: Read the token from environment variables
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") 
 WARNING_FILE = "warnings.json"
+
+# Check token immediately for a clear error message
+if not BOT_TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set. Please set it securely.")
 
 # Initialize the router
 router = Router()
@@ -24,17 +30,21 @@ def load_warnings() -> Dict[str, int]:
     if not os.path.exists(WARNING_FILE):
         return {}
     with open(WARNING_FILE, 'r') as f:
-        # Load keys as strings, then convert back to tuple keys later if needed
-        # For simplicity in JSON, we will use a "chat_id-user_id" string key format.
         try:
-            return json.load(f)
+            # We load the data, ensuring it handles an empty file gracefully
+            content = f.read()
+            return json.loads(content) if content else {}
         except json.JSONDecodeError:
+            print(f"Warning: Could not decode JSON from {WARNING_FILE}. Starting with empty warnings.")
             return {}
 
 def save_warnings(data: Dict[str, int]):
     """Saves warnings to the JSON file."""
-    with open(WARNING_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+    try:
+        with open(WARNING_FILE, 'w') as f:
+            json.dump(data, f, indent=4)
+    except IOError as e:
+        print(f"Error saving warnings to file: {e}")
 
 def get_warn_key(chat_id: int, user_id: int) -> str:
     """Creates a unique string key for the chat/user combination."""
@@ -45,7 +55,6 @@ async def warn_user(chat_id: int, user_id: int) -> int:
     warnings_data = load_warnings()
     key = get_warn_key(chat_id, user_id)
     
-    # Get current count, increment, and save
     current_count = warnings_data.get(key, 0)
     new_count = current_count + 1
     warnings_data[key] = new_count
@@ -61,7 +70,7 @@ def clear_warnings(chat_id: int, user_id: int):
         del warnings_data[key]
         save_warnings(warnings_data)
 
-# --- 2. General Utility Functions ---
+# --- 2. General Utility Functions (Simplified) ---
 
 async def is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     """Checks if a user is an administrator or owner of the chat."""
@@ -73,30 +82,20 @@ async def is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
 
 def parse_time(time_str: str) -> Optional[int]:
     """Parses time string (e.g., '10m', '1h') to Unix timestamp."""
-    if not time_str:
-        return None
-    
+    if not time_str: return None
     match = re.match(r"(\d+)([mhd])", time_str.lower())
-    if not match:
-        return None
+    if not match: return None
 
-    value = int(match.group(1))
-    unit = match.group(2)
-    
-    # Calculate seconds
+    value, unit = int(match.group(1)), match.group(2)
     seconds = 0
     if unit == 'm': seconds = value * 60
     elif unit == 'h': seconds = value * 3600
     elif unit == 'd': seconds = value * 86400
-
-    # Return the target Unix timestamp
+    
     return int((datetime.now() + timedelta(seconds=seconds)).timestamp())
 
 def extract_target_user(message: Message) -> Optional[Tuple[int, Optional[str]]]:
-    """
-    Extracts target user ID from a reply or command arguments.
-    Returns (user_id, raw_time_string)
-    """
+    """Extracts target user ID and potential time argument."""
     user_id = None
     time_arg = None
     
@@ -104,22 +103,18 @@ def extract_target_user(message: Message) -> Optional[Tuple[int, Optional[str]]]
         user_id = message.reply_to_message.from_user.id
         args = message.text.split()[1:]
         if args: time_arg = args[0]
-            
     else:
         args = message.text.split()[1:]
         if not args: return None
-            
-        target_str = args[0]
-        if target_str.isdigit():
-            user_id = int(target_str)
-        
+        if args[0].isdigit():
+            user_id = int(args[0])
         if len(args) > 1:
             time_arg = args[1]
     
     return (user_id, time_arg) if user_id else None
 
 async def delete_later(message: Message, delay_seconds: int):
-    """Deletes the message after a delay."""
+    """Deletes the command message after a delay."""
     await asyncio.sleep(delay_seconds)
     try:
         await message.delete()
@@ -139,30 +134,23 @@ async def cmd_mute(message: Message):
         return await message.reply("⚠️ You must be an admin to use this.")
         
     target = extract_target_user(message)
-    if not target:
-        return await message.reply("Usage: Reply to user OR /mute USER_ID TIME (e.g., 10m)")
-        
+    if not target: return await message.reply("Usage: Reply to user OR /mute USER_ID TIME (e.g., 10m)")
     user_id, raw_time = target
-    until_date_ts = parse_time(raw_time)
     
-    # Set default mute time to 1 hour if not provided or time not parsed
-    if until_date_ts is None:
-        until_date_ts = int((datetime.now() + timedelta(hours=1)).timestamp())
+    until_date_ts = parse_time(raw_time) or int((datetime.now() + timedelta(hours=1)).timestamp())
 
     if await is_admin(message.bot, message.chat.id, user_id):
         return await message.reply("⚠️ I cannot mute an admin.")
         
     try:
         await message.bot.restrict_chat_member(
-            chat_id=message.chat.id,
-            user_id=user_id,
+            chat_id=message.chat.id, user_id=user_id,
             permissions=ChatPermissions(can_send_messages=False), 
             until_date=until_date_ts 
         )
         await message.reply(f"🔇 User `{user_id}` muted until {datetime.fromtimestamp(until_date_ts).strftime('%H:%M:%S')}.", parse_mode="Markdown")
     except Exception as e:
         await message.reply(f"❌ Failed to mute user: {e}")
-        
     await delete_later(message, 10)
 
 @router.message(Command("unmute"))
@@ -171,21 +159,18 @@ async def cmd_unmute(message: Message):
         return await message.reply("⚠️ You must be an admin to use this.")
         
     target = extract_target_user(message)
-    if not target:
-        return await message.reply("Usage: Reply to user OR /unmute USER_ID")
-        
+    if not target: return await message.reply("Usage: Reply to user OR /unmute USER_ID")
     user_id, _ = target
     
     try:
-        # Restoring all standard permissions lifts the mute
+        # Granting all permissions lifts the restriction/mute
         await message.bot.restrict_chat_member(
-            chat_id=message.chat.id,
-            user_id=user_id,
+            chat_id=message.chat.id, user_id=user_id,
             permissions=ChatPermissions(
                 can_send_messages=True, can_send_audios=True, can_send_documents=True,
-                can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
-                can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
-                can_add_web_page_previews=True, can_invite_users=True,
+                can_send_photos=True, can_send_videos=True, can_send_voice_notes=True,
+                can_send_polls=True, can_send_other_messages=True, can_add_web_page_previews=True,
+                can_invite_users=True, can_pin_messages=False
             )
         )
         await message.reply("🔊 User unmuted.")
@@ -200,9 +185,7 @@ async def cmd_ban(message: Message):
         return await message.reply("⚠️ You must be an admin to use this.")
         
     target = extract_target_user(message)
-    if not target:
-        return await message.reply("Usage: Reply to user OR /ban USER_ID")
-        
+    if not target: return await message.reply("Usage: Reply to user OR /ban USER_ID")
     user_id, _ = target
     
     if await is_admin(message.bot, message.chat.id, user_id):
@@ -210,7 +193,7 @@ async def cmd_ban(message: Message):
         
     try:
         await message.bot.ban_chat_member(chat_id=message.chat.id, user_id=user_id)
-        clear_warnings(message.chat.id, user_id) # Clear warnings on ban
+        clear_warnings(message.chat.id, user_id)
         await message.reply("⛔ User banned.")
     except Exception as e:
         await message.reply(f"❌ Failed to ban user: {e}")
@@ -223,9 +206,7 @@ async def cmd_unban(message: Message):
         return await message.reply("⚠️ You must be an admin to use this.")
         
     target = extract_target_user(message)
-    if not target:
-        return await message.reply("Usage: Reply to user OR /unban USER_ID")
-        
+    if not target: return await message.reply("Usage: Reply to user OR /unban USER_ID")
     user_id, _ = target
     
     try:
@@ -242,42 +223,29 @@ async def cmd_warn(message: Message):
         return await message.reply("⚠️ You must be an admin to use this.")
         
     target = extract_target_user(message)
-    if not target:
-        return await message.reply("Usage: Reply to a user OR /warn USER_ID")
-        
+    if not target: return await message.reply("Usage: Reply to a user OR /warn USER_ID")
     user_id, _ = target
     
     if await is_admin(message.bot, message.chat.id, user_id):
         return await message.reply("⚠️ I cannot warn an admin.")
         
     try:
-        # 1. Increment and get the new warns count (using persistent storage)
         warns = await warn_user(message.chat.id, user_id)
         
-        # 2. Check the kick threshold
         if warns >= 3:
-            # Action 1: Ban for 60 seconds (Soft Kick)
+            # Kick logic: Ban for 60 seconds (Soft Kick)
             kick_until = int((datetime.now() + timedelta(seconds=60)).timestamp())
-            await message.bot.ban_chat_member(
-                chat_id=message.chat.id, 
-                user_id=user_id,
-                until_date=kick_until
-            )
             
-            # Action 2: Immediately unban to allow the user to rejoin
-            await message.bot.unban_chat_member(
-                chat_id=message.chat.id,
-                user_id=user_id,
-                only_if_banned=True
-            )
-            
-            # Action 3: Clear warnings after successful kick
+            # 1. Ban/Kick
+            await message.bot.ban_chat_member(chat_id=message.chat.id, user_id=user_id, until_date=kick_until)
+            # 2. Immediately Unban to allow rejoin
+            await message.bot.unban_chat_member(chat_id=message.chat.id, user_id=user_id, only_if_banned=True)
+            # 3. Clear warnings
             clear_warnings(message.chat.id, user_id)
             
             await message.reply(f"❗ User **kicked** after reaching the limit of **{warns}** warns.", parse_mode="Markdown")
             
         else:
-            # Warning message
             await message.reply(f"⚠️ User warned. Current warnings: **{warns}/3**.", parse_mode="Markdown")
             
     except TelegramBadRequest as e:
@@ -290,8 +258,7 @@ async def cmd_warn(message: Message):
 # --- Main Bot Setup and Execution ---
 
 async def main():
-    # Load warnings immediately at startup (optional, but good practice)
-    # This prevents the first warn from overwriting data if the file already exists
+    # Load warnings data at startup
     _ = load_warnings() 
     
     bot = Bot(token=BOT_TOKEN)
@@ -306,5 +273,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Bot stopped by user.")
+    except ValueError as e:
+        print(f"Configuration Error: {e}")
     except Exception as e:
         print(f"An error occurred: {e}")
