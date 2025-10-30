@@ -1,12 +1,13 @@
-from aiogram import Dispatcher
-from aiogram.types import Message, Message
+from aiogram import Dispatcher, F
+from aiogram.types import Message
+from aiogram.filters import Command
 # Ensure these imports are correct based on your utils.py file
 from utils import contains_link, contains_abuse, is_admin, delete_later 
 from aiogram.filters import CommandObject
 from aiogram.utils.deep_linking import decode_payload
 
+# --- Helper Function (Keep this the same) ---
 async def delete_and_notify(message: Message, reason: str):
-    # (The body of this function remains the same as before)
     try:
         await message.delete() 
         warning = await message.chat.send_message(
@@ -17,38 +18,77 @@ async def delete_and_notify(message: Message, reason: str):
     except Exception:
         pass
 
+# --- Main Setup Function ---
 def setup_filters(dp: Dispatcher):
-    """Registers a handler to check all messages for prohibited content."""
-
-    # Note: We are keeping the generic @dp.message() but adding an early return for commands
-    @dp.message()
-    async def content_filter(message: Message):
-        # 1. Skip private chats
+    """Registers a set of handlers for anti-spam, anti-link, and the final catch-all."""
+    
+    # ----------------------------------------------------------------------
+    # 1. ANTI-SPAM / ANTI-LINK HANDLER (Highest priority within this router)
+    # ----------------------------------------------------------------------
+    
+    # We use a filter to ONLY match messages that are NOT commands and are NOT from an admin/bot.
+    # The 'Command' filter is the robust way to exclude commands.
+    
+    async def admin_or_bot_check(message: Message) -> bool:
+        """Returns True if the user is an admin or a bot (we skip these)."""
         if message.chat.type not in ["group", "supergroup"]:
-            return
-        
-        # 2. Skip admins
-        # Check if the user is an admin or if the message is from the bot itself
-        if await is_admin(message.chat, message.from_user.id) or message.from_user.is_bot:
-            return
-            
-        # 3. CRITICAL FIX: Skip messages that ARE commands!
-        # If the message text starts with '/' (and is not an edit), assume it's a command
-        if message.text and message.text.startswith('/'):
-            # Allow the message to pass to the next handler (the command handlers)
-            return 
+            return True # Skip private chats from filter logic
+        if message.from_user.is_bot:
+            return True
+        return await is_admin(message.chat, message.from_user.id)
 
-        # --- FILTERS (Only runs for non-admin, non-command messages) ---
+
+    @dp.message(
+        F.text,                                 # Must have text
+        ~Command(commands=['start', 'help']),   # Exclude basic commands that might not be in moderation
+        ~admin_or_bot_check,                    # Skip admins and bots
+        F.text.startswith('/'),                 # Only if it's NOT a command (this is to catch any remaining text)
+        
+        # CRITICAL FILTER: Only check messages that contain a link or abuse
+        (F.text.func(contains_link) | F.text.func(contains_abuse))
+    )
+    async def content_filter(message: Message):
+        """Checks for prohibited content and deletes the message if found."""
         
         # Anti-Link Check
         if contains_link(message):
             await delete_and_notify(message, "prohibited links")
-            return  # Stop processing here!
+            return # Stop processing the update here
             
         # Anti-Abuse Check
         if contains_abuse(message):
             await delete_and_notify(message, "abusive language")
-            return  # Stop processing here!
+            return # Stop processing the update here
             
-        # If all checks pass, the message continues to flood control, then stops.
+        # Note: If no filter matches, the message passes through to the next handler.
+
+
+    # ----------------------------------------------------------------------
+    # 2. FINAL CATCH-ALL / UNKNOWN COMMAND HANDLER (Lowest priority in all routers)
+    # ----------------------------------------------------------------------
+
+    @dp.message()
+    async def unknown_command_or_text_handler(message: Message):
+        """
+        This handler catches EVERYTHING that wasn't handled by any previous,
+        more specific handler (Commands, Specific Content Filters, etc.).
+        """
+        
+        # Skip private chats, if you want your bot to only reply in groups/supergroups
+        if message.chat.type not in ["group", "supergroup"]:
+            return
+            
+        # If the message is text and starts with '/' but wasn't a recognized command, 
+        # it's an UNKNOWN COMMAND.
+        if message.text and message.text.startswith('/'):
+            await message.reply("Sorry, I don't recognize that command. Use /help to see what I can do.")
+            return
+
+        # If it's a non-command, non-spam message that fell through all handlers,
+        # it's a general text/media update. You can add your echo/default logic here.
+        # Example:
+        # if message.text:
+        #     await message.answer("Thanks for the message!")
+
+        # Since this is the LAST handler, we don't need a return, but it's good practice.
         return
